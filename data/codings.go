@@ -261,7 +261,7 @@ func (*iso88591) Decode(data []byte) (string, error) {
 func (*iso88591) DataCoding() byte { return LATIN1Coding }
 
 func (*iso88591) ShouldSplit(text string, octetLimit uint) bool {
-	return uint(len(text)) > octetLimit
+	return uint(len([]rune(text))) > octetLimit
 }
 
 func (c *iso88591) EncodeSplit(text string, octetLimit uint) ([][]byte, error) {
