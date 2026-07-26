@@ -3,6 +3,7 @@ package data
 import (
 	"encoding/hex"
 	"log"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -557,4 +558,89 @@ func TestCustomEncoding(t *testing.T) {
 	decoded, err := enc.Decode(encoded)
 	require.NoError(t, err)
 	require.Equal(t, "abc", decoded)
+}
+
+// TestGSM7BitEscapeCharSeptets covers the unpacked GSM 7-bit splitter for text
+// containing escape characters. GSM 03.38 bills those as two septets each, so
+// measuring the budget in bytes both under-splits and emits over-budget
+// segments.
+func TestGSM7BitEscapeCharSeptets(t *testing.T) {
+	splitter, ok := GSM7BIT.(Splitter)
+	require.True(t, ok)
+
+	t.Run("shouldSplitCountsEscapeCharsAsTwoSeptets", func(t *testing.T) {
+		const octetLim = uint(140)
+
+		// 71 escape chars = 142 septets, though only 71 bytes.
+		require.True(t, splitter.ShouldSplit(strings.Repeat("{", 71), octetLim),
+			"71 escape chars are 142 septets and must split")
+
+		// Mixed: 100 regular + 21 escape = 100 + 42 = 142 septets.
+		require.True(t, splitter.ShouldSplit(strings.Repeat("a", 100)+strings.Repeat("{", 21), octetLim),
+			"142 septets must split regardless of byte length")
+
+		// 70 escape chars = exactly 140 septets, which is at the limit.
+		require.False(t, splitter.ShouldSplit(strings.Repeat("{", 70), octetLim),
+			"140 septets is exactly at the limit and must not split")
+
+		// A multi-byte escape char must be billed by septets, not UTF-8 width.
+		require.False(t, splitter.ShouldSplit(strings.Repeat("€", 70), octetLim),
+			"70 euro signs are 140 septets and must not split")
+		require.True(t, splitter.ShouldSplit(strings.Repeat("€", 71), octetLim),
+			"71 euro signs are 142 septets and must split")
+	})
+
+	t.Run("encodeSplitRespectsOctetLimit", func(t *testing.T) {
+		const octetLim = uint(134)
+
+		for _, tc := range []struct {
+			name string
+			text string
+		}{
+			{"allEscapeChars", strings.Repeat("{", 134)},
+			{"mixedRegularAndEscape", strings.Repeat("a", 100) + strings.Repeat("{", 34)},
+			{"allRegularChars", strings.Repeat("a", 134)},
+			{"multiSegment", strings.Repeat("{", 200)},
+			{"repeatingMixed", strings.Repeat("ab{", 167)},
+			{"multiByteEscapeChar", strings.Repeat("€", 100)},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				segments, err := splitter.EncodeSplit(tc.text, octetLim)
+				require.NoError(t, err)
+
+				var joined []byte
+				for i, seg := range segments {
+					require.LessOrEqualf(t, uint(len(seg)), octetLim,
+						"segment %d is %d octets, over the %d octet budget", i, len(seg), octetLim)
+					joined = append(joined, seg...)
+				}
+
+				decoded, err := GSM7BIT.Decode(joined)
+				require.NoError(t, err)
+				require.Equal(t, tc.text, decoded, "segments must rejoin into the original text")
+			})
+		}
+	})
+
+	t.Run("encodeSplitKeepsEscapeSequenceIntact", func(t *testing.T) {
+		// Place an escape char so that it would straddle the segment boundary
+		// if escape sequences were allowed to be split. 3GPP TS 23.040
+		// 9.2.3.24.1 requires it to move to the next segment instead.
+		const octetLim = uint(134)
+		text := strings.Repeat("a", 133) + strings.Repeat("{", 30)
+
+		segments, err := splitter.EncodeSplit(text, octetLim)
+		require.NoError(t, err)
+		require.Len(t, segments, 2)
+		require.Equal(t, 133, len(segments[0]),
+			"the boundary escape char must move to the next segment rather than split")
+
+		var joined []byte
+		for _, seg := range segments {
+			joined = append(joined, seg...)
+		}
+		decoded, err := GSM7BIT.Decode(joined)
+		require.NoError(t, err)
+		require.Equal(t, text, decoded)
+	})
 }

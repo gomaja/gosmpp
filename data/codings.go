@@ -92,12 +92,25 @@ func (c *gsm7bit) Decode(data []byte) (string, error) {
 
 func (c *gsm7bit) DataCoding() byte { return GSM7BITCoding }
 
+// getSeptetCount returns the number of septets the given runes occupy once
+// encoded. Escape characters (^ { } \ [ ~ ] | €) are not in the GSM 03.38
+// default alphabet and are transmitted as a two-septet escape sequence.
+//
+// https://en.wikipedia.org/wiki/GSM_03.38
+func (c *gsm7bit) getSeptetCount(runeSlice []rune) int {
+	escCharsLen := len(GetEscapeChars(runeSlice))
+	return len(runeSlice) - escCharsLen + escCharsLen*2
+}
+
 func (c *gsm7bit) ShouldSplit(text string, octetLimit uint) (shouldSplit bool) {
+	// Count septets rather than bytes: a rune is not one septet (escape
+	// characters cost two) and is not one byte either (they are multi-byte
+	// in UTF-8), so len(text) measures neither budget correctly.
+	nSeptet := c.getSeptetCount([]rune(text))
 	if c.packed {
-		return uint((len(text)*7+7)/8) > octetLimit
-	} else {
-		return uint(len(text)) > octetLimit
+		return uint((nSeptet*7+7)/8) > octetLimit
 	}
+	return uint(nSeptet) > octetLimit
 }
 
 func (c *gsm7bit) EncodeSplit(text string, octetLimit uint) (allSeg [][]byte, err error) {
@@ -108,17 +121,26 @@ func (c *gsm7bit) EncodeSplit(text string, octetLimit uint) (allSeg [][]byte, er
 	allSeg = [][]byte{}
 	runeSlice := []rune(text)
 
-	fr, to := 0, int(octetLimit)
+	// In the unpacked form every septet is carried in its own octet, so the
+	// septet budget per segment equals the octet limit.
+	lim := int(octetLimit)
+
+	fr := 0
 	for fr < len(runeSlice) {
-		if to > len(runeSlice) {
-			to = len(runeSlice)
-		}
+		to := min(fr+lim, len(runeSlice))
+
+		// Walk by septet cost so escape characters are billed as two, and so
+		// an escape sequence is never split across segments (3GPP TS 23.040
+		// 9.2.3.24.1: "A character represented by an escape-sequence shall not
+		// be split in the middle.").
+		to = determineTo(fr, to, lim, runeSlice)
+
 		seg, err := c.Encode(string(runeSlice[fr:to]))
 		if err != nil {
 			return nil, err
 		}
 		allSeg = append(allSeg, seg)
-		fr, to = to, to+int(octetLimit)
+		fr = to
 	}
 
 	return
