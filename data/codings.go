@@ -270,10 +270,7 @@ func (c *iso88591) EncodeSplit(text string, octetLimit uint) ([][]byte, error) {
 	limit := int(octetLimit)
 
 	for i := 0; i < len(runeSlice); {
-		end := i + limit
-		if end > len(runeSlice) {
-			end = len(runeSlice)
-		}
+		end := min(i+limit, len(runeSlice))
 
 		segment, err := c.Encode(string(runeSlice[i:end]))
 		if err != nil {
