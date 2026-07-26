@@ -24,7 +24,7 @@ func TestUserDataHeader(t *testing.T) {
 		require.True(t, found)
 		require.Equal(t, totalParts, byte(2))
 		require.Equal(t, sequence, byte(1))
-		require.Equal(t, reference, uint(12))
+		require.Equal(t, reference, uint16(12))
 	})
 
 	t.Run("marshalBinaryUDHConcatMessage (16 bit)", func(t *testing.T) {
@@ -37,7 +37,7 @@ func TestUserDataHeader(t *testing.T) {
 		require.True(t, found)
 		require.Equal(t, totalParts, byte(2))
 		require.Equal(t, sequence, byte(1))
-		require.Equal(t, reference, uint(1234))
+		require.Equal(t, reference, uint16(1234))
 	})
 
 	t.Run("unmarshalBinaryUDHConcatMessage (8 bit)", func(t *testing.T) {
@@ -63,7 +63,7 @@ func TestUserDataHeader(t *testing.T) {
 		require.True(t, found)
 		require.Equal(t, totalParts, byte(2))
 		require.Equal(t, sequence, byte(1))
-		require.Equal(t, reference, uint(1234))
+		require.Equal(t, reference, uint16(1234))
 
 		b, err := u.MarshalBinary()
 		require.NoError(t, err)
