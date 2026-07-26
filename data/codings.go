@@ -257,10 +257,7 @@ func (c *ascii) EncodeSplit(text string, octetLimit uint) ([][]byte, error) {
 	limit := int(octetLimit)
 
 	for i := 0; i < len(text); {
-		end := i + limit
-		if end > len(text) {
-			end = len(text)
-		}
+		end := min(i+limit, len(text))
 
 		segment, err := c.Encode(text[i:end])
 		if err != nil {
@@ -332,10 +329,7 @@ func (c *iso88595) EncodeSplit(text string, octetLimit uint) ([][]byte, error) {
 	limit := int(octetLimit)
 
 	for i := 0; i < len(runeSlice); {
-		end := i + limit
-		if end > len(runeSlice) {
-			end = len(runeSlice)
-		}
+		end := min(i+limit, len(runeSlice))
 
 		segment, err := c.Encode(string(runeSlice[i:end]))
 		if err != nil {
@@ -380,10 +374,7 @@ func (c *iso88598) EncodeSplit(text string, octetLimit uint) ([][]byte, error) {
 	limit := int(octetLimit)
 
 	for i := 0; i < len(runeSlice); {
-		end := i + limit
-		if end > len(runeSlice) {
-			end = len(runeSlice)
-		}
+		end := min(i+limit, len(runeSlice))
 
 		segment, err := c.Encode(string(runeSlice[i:end]))
 		if err != nil {
