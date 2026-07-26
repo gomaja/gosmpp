@@ -23,6 +23,12 @@ type transceivable struct {
 	in     *receivable
 	out    *transmittable
 
+	// started is closed by start once every daemon has been registered with wg.
+	// closing waits for it before calling wg.Wait, so that Add can never run
+	// concurrently with Wait. startOnce keeps that close to a single call.
+	started   chan struct{}
+	startOnce sync.Once
+
 	aliveState   int32
 	requestStore RequestStore
 }
@@ -33,6 +39,7 @@ func newTransceivable(conn *Connection, settings Settings, requestStore RequestS
 	t := &transceivable{
 		settings:     settings,
 		conn:         conn,
+		started:      make(chan struct{}),
 		requestStore: requestStore,
 	}
 	t.ctx, t.cancel = context.WithCancel(context.Background())
@@ -95,17 +102,36 @@ func newTransceivable(conn *Connection, settings Settings, requestStore RequestS
 	return t
 }
 
+// start registers and launches the daemons of this transceiver and of both
+// directions. It is safe to call concurrently with closing: whichever runs first
+// wins, and the other becomes a no-op or waits. Repeat calls have no effect.
 func (t *transceivable) start() {
-	if t.settings.WindowedRequestTracking != nil && t.settings.ExpireCheckTimer > 0 {
-		t.wg.Add(1)
-		go func() {
-			defer t.wg.Done()
-			t.windowCleanup()
-		}()
+	t.startOnce.Do(func() {
+		defer close(t.started)
 
-	}
-	t.out.start()
-	t.in.start()
+		// Already closed: register nothing, so closing's Wait sees a settled counter.
+		if atomic.LoadInt32(&t.aliveState) != Alive {
+			return
+		}
+
+		if t.settings.WindowedRequestTracking != nil && t.settings.ExpireCheckTimer > 0 {
+			t.wg.Add(1)
+			go func() {
+				defer t.wg.Done()
+				t.windowCleanup()
+			}()
+
+		}
+		t.out.start()
+		t.in.start()
+	})
+}
+
+// awaitStarted blocks until daemon registration has settled, running the startup
+// path itself if start was never called so that it cannot block indefinitely.
+func (t *transceivable) awaitStarted() {
+	t.start()
+	<-t.started
 }
 
 // SystemID returns tagged SystemID which is attached with bind_resp from SMSC.
@@ -160,6 +186,11 @@ func (t *transceivable) windowCleanup() {
 func (t *transceivable) closing(state State) (err error) {
 	if atomic.CompareAndSwapInt32(&t.aliveState, Alive, Closed) {
 		t.cancel()
+
+		// Make sure daemon registration is finished before waiting on wg, so that
+		// Add is never called concurrently with Wait. aliveState is already Closed
+		// here, so a start that has not run yet registers nothing and returns.
+		t.awaitStarted()
 
 		// closing input and output
 		_ = t.out.close(StoppingProcessOnly)

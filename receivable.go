@@ -10,11 +10,18 @@ import (
 )
 
 type receivable struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	settings     Settings
-	conn         *Connection
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	settings Settings
+	conn     *Connection
+
+	// started is closed by start once every daemon has been registered with wg.
+	// close waits for it before calling wg.Wait, so that Add can never run
+	// concurrently with Wait. startOnce keeps that close to a single call.
+	started   chan struct{}
+	startOnce sync.Once
+
 	aliveState   int32
 	requestStore RequestStore
 }
@@ -23,6 +30,7 @@ func newReceivable(conn *Connection, settings Settings, requestStore RequestStor
 	r := &receivable{
 		settings:     settings,
 		conn:         conn,
+		started:      make(chan struct{}),
 		requestStore: requestStore,
 	}
 	r.ctx, r.cancel = context.WithCancel(context.Background())
@@ -37,6 +45,11 @@ func (t *receivable) close(state State) (err error) {
 
 		// set read deadline for current blocking read
 		_ = t.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+
+		// Make sure daemon registration is finished before waiting on wg, so that
+		// Add is never called concurrently with Wait. aliveState is already Closed
+		// here, so a start that has not run yet registers nothing and returns.
+		t.awaitStarted()
 
 		// wait daemons
 		t.wg.Wait()
@@ -60,12 +73,31 @@ func (t *receivable) closing(state State) {
 	}()
 }
 
+// start registers and launches the read daemon. It is safe to call concurrently
+// with close: whichever runs first wins, and the other becomes a no-op or waits.
+// Calling it more than once has no additional effect.
 func (t *receivable) start() {
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
-		t.loop()
-	}()
+	t.startOnce.Do(func() {
+		defer close(t.started)
+
+		// Already closed: register nothing, so close's Wait sees a settled counter.
+		if atomic.LoadInt32(&t.aliveState) != Alive {
+			return
+		}
+
+		t.wg.Add(1)
+		go func() {
+			defer t.wg.Done()
+			t.loop()
+		}()
+	})
+}
+
+// awaitStarted blocks until daemon registration has settled, running the startup
+// path itself if start was never called so that it cannot block indefinitely.
+func (t *receivable) awaitStarted() {
+	t.start()
+	<-t.started
 }
 
 func (t *receivable) loop() {

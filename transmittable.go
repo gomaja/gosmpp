@@ -26,6 +26,12 @@ type transmittable struct {
 
 	conn *Connection
 
+	// started is closed by start once every daemon has been registered with wg.
+	// close waits for it before calling wg.Wait, so that Add can never run
+	// concurrently with Wait. startOnce keeps that close to a single call.
+	started   chan struct{}
+	startOnce sync.Once
+
 	aliveState   int32
 	pendingWrite int32
 	requestStore RequestStore
@@ -36,6 +42,7 @@ func newTransmittable(conn *Connection, settings Settings, requestStore RequestS
 		settings:     settings,
 		conn:         conn,
 		input:        make(chan pdu.PDU, 1),
+		started:      make(chan struct{}),
 		aliveState:   Alive,
 		pendingWrite: 0,
 		requestStore: requestStore,
@@ -46,6 +53,11 @@ func newTransmittable(conn *Connection, settings Settings, requestStore RequestS
 
 func (t *transmittable) close(state State) (err error) {
 	if atomic.CompareAndSwapInt32(&t.aliveState, Alive, Closed) {
+		// Make sure daemon registration is finished before waiting on wg, so that
+		// Add is never called concurrently with Wait. aliveState is already Closed
+		// here, so a start that has not run yet registers nothing and returns.
+		t.awaitStarted()
+
 		for atomic.LoadInt32(&t.pendingWrite) != 0 {
 			runtime.Gosched()
 		}
@@ -116,19 +128,38 @@ func (t *transmittable) Submit(p pdu.PDU) (err error) {
 	return
 }
 
+// start registers and launches the write daemon. It is safe to call concurrently
+// with close: whichever runs first wins, and the other becomes a no-op or waits.
+// Calling it more than once has no additional effect.
 func (t *transmittable) start() {
-	t.wg.Add(1)
-	if t.settings.EnquireLink > 0 {
-		go func() {
-			defer t.wg.Done()
-			t.loopWithEnquireLink()
-		}()
-	} else {
-		go func() {
-			defer t.wg.Done()
-			t.loop()
-		}()
-	}
+	t.startOnce.Do(func() {
+		defer close(t.started)
+
+		// Already closed: register nothing, so close's Wait sees a settled counter.
+		if atomic.LoadInt32(&t.aliveState) != Alive {
+			return
+		}
+
+		t.wg.Add(1)
+		if t.settings.EnquireLink > 0 {
+			go func() {
+				defer t.wg.Done()
+				t.loopWithEnquireLink()
+			}()
+		} else {
+			go func() {
+				defer t.wg.Done()
+				t.loop()
+			}()
+		}
+	})
+}
+
+// awaitStarted blocks until daemon registration has settled, running the startup
+// path itself if start was never called so that it cannot block indefinitely.
+func (t *transmittable) awaitStarted() {
+	t.start()
+	<-t.started
 }
 
 func (t *transmittable) drain() {
