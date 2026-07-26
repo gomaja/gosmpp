@@ -1,6 +1,9 @@
 package pdu
 
 import (
+	"errors"
+	"io"
+
 	"github.com/linxGnu/gosmpp/data"
 )
 
@@ -78,10 +81,15 @@ func (c *BindResp) Marshal(b *ByteBuffer) {
 }
 
 // Unmarshal implements PDU interface.
+//
+// The system_id field is read unconditionally, since Marshal always writes it.
+// An absent field is tolerated so that responses omitting system_id still parse,
+// matching how SubmitSMResp handles its message_id.
 func (c *BindResp) Unmarshal(b *ByteBuffer) error {
 	return c.base.unmarshal(b, func(w *ByteBuffer) (err error) {
-		if c.CommandID == data.BIND_TRANSCEIVER_RESP || c.CommandStatus == data.ESME_ROK {
-			c.SystemID, err = w.ReadCString()
+		c.SystemID, err = w.ReadCString()
+		if errors.Is(err, io.EOF) {
+			return nil
 		}
 		return
 	})
