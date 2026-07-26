@@ -57,3 +57,63 @@ func TestParsePDU(t *testing.T) {
 		}))
 	})
 }
+
+func TestGetOptionalMessagePayload(t *testing.T) {
+	t.Run("present", func(t *testing.T) {
+		v := newBase()
+		v.RegisterOptionalParam(Field{Tag: TagMessagePayload, Data: []byte("hello")})
+
+		payload, found := v.GetOptionalMessagePayload()
+		require.True(t, found)
+		require.Equal(t, []byte("hello"), payload)
+	})
+
+	t.Run("absent", func(t *testing.T) {
+		v := newBase()
+
+		payload, found := v.GetOptionalMessagePayload()
+		require.False(t, found)
+		require.Nil(t, payload)
+	})
+
+	t.Run("presentButEmpty", func(t *testing.T) {
+		v := newBase()
+		v.RegisterOptionalParam(Field{Tag: TagMessagePayload, Data: []byte{}})
+
+		payload, found := v.GetOptionalMessagePayload()
+		require.False(t, found)
+		require.Nil(t, payload)
+	})
+
+	t.Run("otherTagsIgnored", func(t *testing.T) {
+		v := newBase()
+		v.RegisterOptionalParam(Field{Tag: TagDestBearerType, Data: []byte{95}})
+
+		payload, found := v.GetOptionalMessagePayload()
+		require.False(t, found)
+		require.Nil(t, payload)
+	})
+
+	t.Run("returnedSliceAliasesPDU", func(t *testing.T) {
+		v := newBase()
+		v.RegisterOptionalParam(Field{Tag: TagMessagePayload, Data: []byte("hello")})
+
+		payload, found := v.GetOptionalMessagePayload()
+		require.True(t, found)
+
+		payload[0] = 'j'
+
+		again, found := v.GetOptionalMessagePayload()
+		require.True(t, found)
+		require.Equal(t, []byte("jello"), again)
+	})
+
+	t.Run("fromUnmarshalledPDU", func(t *testing.T) {
+		v := newBase()
+		require.Nil(t, v.unmarshalOptionalParam(fromHex("042400056869746865")))
+
+		payload, found := v.GetOptionalMessagePayload()
+		require.True(t, found)
+		require.Equal(t, []byte("hithe"), payload)
+	})
+}

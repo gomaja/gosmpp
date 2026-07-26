@@ -187,6 +187,24 @@ func (c *base) GetSARConcatInfo() (totalParts, partNum byte, mref uint16, found 
 	return
 }
 
+// GetOptionalMessagePayload returns the message bytes from the MessagePayload optional TLV
+// parameter (tag 0x0424). This is used when the message content is sent as a TLV parameter
+// instead of in the short_message field. Returns the message data and a boolean indicating
+// whether usable payload data was found.
+//
+// A MessagePayload parameter that is present but carries no data reports found = false, since
+// an empty payload is not usable as message content. Callers that need to distinguish an absent
+// parameter from a present-but-empty one should inspect OptionalParameters directly.
+//
+// The returned slice is the PDU's own buffer, not a copy; mutating it mutates the PDU.
+func (c *base) GetOptionalMessagePayload() (data []byte, found bool) {
+	if field, exists := c.OptionalParameters[TagMessagePayload]; exists && len(field.Data) > 0 {
+		data = field.Data
+		found = true
+	}
+	return
+}
+
 // Parse PDU from reader.
 func Parse(r io.Reader) (pdu PDU, err error) {
 	var headerBytes [16]byte
