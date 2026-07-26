@@ -151,7 +151,7 @@ func (u UDH) FindInfoElement(id byte) (ie *InfoElement, found bool) {
 
 // GetConcatInfo return the FIRST concatenated message IE,
 // For 8-bit reference, mref will be a byte value (0-255)
-// For 16-bit reference, mref will be a uint16 value (0-65535) converted to uint
+// For 16-bit reference, mref will be a uint16 value (0-65535)
 func (u UDH) GetConcatInfo() (totalParts, partNum byte, mref uint16, found bool) {
 	if len(u) == 0 {
 		found = false
